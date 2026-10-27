@@ -476,7 +476,17 @@ only the ping is held back).
 cron:
   failure_repeat_alert_hours: 6   # still broken after this long → one reminder ping,
                                   # then silent again; 0 = alert on every failing run
+  failure_notice_language: ko     # optional Korean failure copy; default: en
 ```
+
+Korean failure notices identify the job and confirmed failure category, explain when
+the cause or recovery outcome is unknown, and link to the execution history. Reminders
+include the incident's first-seen time and previous notification time; a repeated
+failure check is not presented as a count of actual retries. Script failures are not
+classified as model-provider failures. These notices do not recommend a blind rerun:
+the job may require its own resume procedure. They do not change success output,
+incident cooldowns, delivery routes, or the recovery controller's state. English
+failure copy remains the default. Set the key in each owning profile's config.
 
 Anything that changes the picture alerts immediately: a *different* error mints
 its own incident and pings at once, and a successful run re-arms the signature

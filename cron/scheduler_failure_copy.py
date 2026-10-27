@@ -41,6 +41,19 @@ def classify_cron_failure_reason(text: str) -> str:
     return classify_api_error(exc).reason.value
 
 
+def classify_cron_failure(job: dict, text: str) -> str:
+    """Shared script/watchdog precedence before provider classification, for every locale."""
+    if text.lower().startswith("script timed out"):
+        return "script_timeout"
+    if re.search(r"idle for \d+s\s*\(limit \d+s\)", text, re.I):
+        return "inactivity"
+    if text.lower().startswith("script exited"):
+        return "script_error"
+    if job.get("no_agent"):
+        return "unknown"
+    return classify_cron_failure_reason(text)
+
+
 # What happened, per reason: the one gloss table shared with subagent notices lives in
 # agent/turn_failure_copy.py so the two never drift; the job is the subject here.
 def _provider_failure_cause(reason: str) -> Optional[str]:

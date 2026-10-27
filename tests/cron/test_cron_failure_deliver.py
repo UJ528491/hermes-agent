@@ -112,6 +112,37 @@ def _succeeding_run_job(final="all good, here is the brief"):
 
 
 class TestFailureDeliverRouting:
+    @pytest.mark.parametrize("crash", [False, True])
+    def test_korean_failure_reaches_sender_without_english_wrapper(self, run_env, monkeypatch, crash):
+        from hermes_cli.config import load_config
+        from hermes_constants import get_hermes_home
+        home = get_hermes_home()
+        config = (home / "config.yaml").read_text(encoding="utf-8")
+        (home / "config.yaml").write_text(config + "cron:\n  failure_notice_language: ko\n", encoding="utf-8")
+        other = home / "other"
+        other.mkdir()
+        (other / "config.yaml").write_text(config, encoding="utf-8")
+        monkeypatch.setattr(s, "load_config", load_config)
+        # Registry entries are profile scoped; keep the external sender captured in all homes.
+        import gateway.platform_registry as registry
+        entry = registry.platform_registry.get("slack")
+        get_entry = registry.platform_registry.get
+        monkeypatch.setattr(registry.platform_registry, "get", lambda name: entry if name == "slack" else get_entry(name))
+        if crash:
+            def failed(*_args, **_kwargs):
+                raise RuntimeError("fixture failed")
+            monkeypatch.setattr(s, "run_job", failed)
+        else:
+            monkeypatch.setattr(s, "run_job", _failing_run_job())
+        for selected, korean in [(home, True), (other, False), (home, True)]:
+            monkeypatch.setenv("HERMES_HOME", str(selected))
+            s.run_one_job({"id": "localized", "name": "한국어 알림", "deliver": "slack:D0MAIN"})
+            message = run_env["send"][-1]["message"]
+            assert ("예약 작업 실패" in message) is korean
+            assert ("Cronjob Response" in message) is not korean
+            assert ("To stop or manage" in message) is not korean
+        assert len(run_env["send"]) == 3
+
     def test_failure_without_failure_deliver_goes_to_deliver_targets(
         self, run_env, monkeypatch
     ):

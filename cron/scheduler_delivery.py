@@ -1952,7 +1952,9 @@ def _deliver_result(
     # Targets acked with NO evidence (bare SendResult(success=True) — Slack/Matrix/Mattermost);
     # persisted as ``last_delivery_unverified`` so `hermes cron list` shows it.
     unverified_targets: list = []
-    if wrap_response:
+    # The localized failure already carries its incident title and next step.
+    localized_failure = for_failure and (user_cfg or {}).get("cron", {}).get("failure_notice_language") == "ko"
+    if wrap_response and not localized_failure:
         task_name = job.get("name", job["id"])
         delivery_content = (
             f"Cronjob Response: {task_name}\n"

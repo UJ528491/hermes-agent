@@ -291,25 +291,26 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
     and would otherwise be blamed on the model service); everything else goes through the shared
     ``classify_api_error`` verdict and the copy table in ``scheduler_failure_copy``."""
     from cron.scheduler_failure_copy import (
-        classify_cron_failure_reason, generic_failure_notice, inactivity_notice,
+        classify_cron_failure, generic_failure_notice, inactivity_notice,
         provider_failure_notice, script_timeout_notice)
 
     job_name = job.get("name") or job.get("id") or "cron job"
     job_id = job.get("id") or job_name
     text = (error or "unknown error").strip()
     lower = text.lower()
+    reason = classify_cron_failure(job, text)
 
     # Script runner contract ("Script timed out after {n}s: {path}") — also for agent jobs with a
     # context script. Must precede provider classification so it never claims a model failure.
     # See #78503, #82460.
-    if lower.startswith("script timed out"):
+    if reason == "script_timeout":
         return script_timeout_notice(job_name, job_id)
 
     # Scheduler inactivity watchdog ("idle for {n}s (limit {m}s)"): the job's OWN tool call went
     # quiet, no model service involved. Its text may still contain "timed out", so it must be
     # recognised before the classifier (field-reported: a stuck `terminal` call was blamed on the
     # provider and the operator debugged the wrong system).
-    if re.search(r"idle for \d+s\s*\(limit \d+s\)", lower):
+    if reason == "inactivity":
         return inactivity_notice(job_name, job_id)
 
     # no_agent jobs never reach a model, so provider errors are structurally impossible for them:
@@ -317,7 +318,7 @@ def _summarize_cron_failure_for_delivery(job: dict, error: str | None) -> str:
     # blame the wrong subsystem.
     if not job.get("no_agent"):
         notice = provider_failure_notice(
-            job_name, job_id, classify_cron_failure_reason(text),
+            job_name, job_id, reason,
             backup_provider_phrase=_fallback_chain_phrase(job), provider=job.get("provider"))
         if notice is not None:
             return notice
@@ -2860,6 +2861,12 @@ def _compose_run_delivery(
                 # The one alert on entering a provider-window hold says so (#89376).
                 + hold_notice(job, job.get("_quota_hold_seconds"))
             )
+    if not success and not blocked_config_silent and not incident_acked:
+        from cron.scheduler_failure_notice import localized_failure_notice
+        localized = localized_failure_notice(job, err, failure_incident_id,
+                                             blocked_config=blocked_config, agent_declared=agent_declared)
+        if localized is not None:
+            deliver_content = localized
     return deliver_content, blocked_config, blocked_config_silent, incident_acked, failure_incident_id
 
 
@@ -3103,11 +3110,13 @@ def _deliver_crash_failure(
         return None, "suppressed_acked"
     delivery_error = None
     try:
+        from cron.scheduler_failure_notice import localized_failure_notice
+        content = localized_failure_notice(job, err_text, failure_incident_id)
+        if content is None:
+            content = _summarize_cron_failure_for_delivery(job, err_text) + _failure_streak_nudge(job)
         delivery_error = _deliver_result(
             job,
-            # Same text as the normal failure delivery: this run also counts toward
-            # failure_streak, so the nudge must leave through here too.
-            _summarize_cron_failure_for_delivery(job, err_text) + _failure_streak_nudge(job),
+            content,
             adapters=adapters,
             loop=loop,
             for_failure=True,

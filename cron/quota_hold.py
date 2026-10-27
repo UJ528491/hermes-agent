@@ -72,27 +72,32 @@ def _window_end(hold_seconds: float) -> datetime:
     return _seconds_after(_hermes_now(), float(hold_seconds) + HOLD_SLACK_SECONDS)
 
 
-def plan_hold(job: Dict[str, Any], hold_seconds: float) -> bool:
-    """Called under the jobs lock AFTER ``_advance_after_run`` computed the schedule's natural
-    ``next_run_at`` for a failed run. Parks a recurring job at its first occurrence after the
-    provider window when that is later than the natural one. Returns True when parked."""
+def planned_hold_until(job: Dict[str, Any], hold_seconds: float) -> Optional[str]:
+    """Compute a hold after the natural next run has been advanced, without changing the job."""
     from cron.jobs import _instant_before, _parse_aware, compute_next_run
 
     schedule = job.get("schedule") or {}
     if schedule.get("kind") not in {"cron", "interval"} or job.get("state") == "paused":
-        clear_state(job)
-        return False
+        return None
     window_end = _window_end(hold_seconds)
     natural_next = _parse_aware(job.get("next_run_at"))
     if natural_next is not None and not _instant_before(natural_next, window_end):
-        clear_state(job)
-        return False
+        return None
     if schedule.get("kind") == "interval":
         parked = window_end.isoformat()
     else:
         # First LEGAL cron occurrence after the window; parking at the boundary would fire at a
         # time the expression excludes.
         parked = compute_next_run(schedule, window_end.isoformat()) or window_end.isoformat()
+    return parked
+
+
+def plan_hold(job: Dict[str, Any], hold_seconds: float) -> bool:
+    """Persist the computed hold under the jobs lock after advancing the failed run."""
+    parked = planned_hold_until(job, hold_seconds)
+    if parked is None:
+        clear_state(job)
+        return False
     job["next_run_at"] = parked
     job[STATE_KEY] = parked
     logger.warning(

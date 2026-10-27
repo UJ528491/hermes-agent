@@ -1840,6 +1840,9 @@ DEFAULT_CONFIG = {
         # silences a signature for good. 0 = re-alert on every failing run. Keep in sync with
         # cron.scheduler.DEFAULT_FAILURE_REPEAT_ALERT_HOURS.
         "failure_repeat_alert_hours": 6,
+        # Native error notices: "en" retains existing copy; "ko" explains the incident in Korean.
+        # Notification language only; normal job output and the recovery controller are unchanged.
+        "failure_notice_language": "en",
     },
     # Kanban multi-agent coordination. The dispatcher ticks every N seconds, reclaims stale claims,
     # promotes dependency-satisfied todos to ready, and fires `hermes -p <assignee> chat -q ...` per
